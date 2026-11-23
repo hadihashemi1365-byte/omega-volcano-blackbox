@@ -1,0 +1,20 @@
+{
+  "version": "v2.0",
+  "last_updated_utc": "2026-11-23T19:08:35Z",
+  "total_days": 1,
+  "dates": [
+    "2026-11-23"
+  ],
+  "symbols_count": 66,
+  "columns_count": 47,
+  "deriv_src": "OKX_V5",
+  "deriv_matched": 53,
+  "nobitex_matched": 50,
+  "macro_onchain": {
+    "fear_greed": 11,
+    "eth_gas_gwei": 0.19,
+    "btc_mempool_vmb": 38.1,
+    "btc_dom_pct": 57.88,
+    "mcap_chg24h": -0.16
+  }
+}
