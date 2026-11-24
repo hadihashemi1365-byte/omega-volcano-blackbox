@@ -1,6 +1,6 @@
 {
   "version": "v2.0",
-  "last_updated_utc": "2026-11-24T22:45:37Z",
+  "last_updated_utc": "2026-11-24T23:01:08Z",
   "total_days": 2,
   "dates": [
     "2026-11-23",
@@ -13,9 +13,9 @@
   "nobitex_matched": 50,
   "macro_onchain": {
     "fear_greed": 11,
-    "eth_gas_gwei": 0.21,
-    "btc_mempool_vmb": 30.63,
+    "eth_gas_gwei": 0.27,
+    "btc_mempool_vmb": 30.95,
     "btc_dom_pct": 57.84,
-    "mcap_chg24h": -4.43
+    "mcap_chg24h": -4.47
   }
 }
