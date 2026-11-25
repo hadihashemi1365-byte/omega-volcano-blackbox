@@ -1,10 +1,11 @@
 {
   "version": "v2.0",
-  "last_updated_utc": "2026-11-24T23:45:35Z",
-  "total_days": 2,
+  "last_updated_utc": "2026-11-25T00:01:07Z",
+  "total_days": 3,
   "dates": [
     "2026-11-23",
-    "2026-11-24"
+    "2026-11-24",
+    "2026-11-25"
   ],
   "symbols_count": 66,
   "columns_count": 47,
@@ -12,10 +13,10 @@
   "deriv_matched": 53,
   "nobitex_matched": 50,
   "macro_onchain": {
-    "fear_greed": 11,
-    "eth_gas_gwei": 0.12,
-    "btc_mempool_vmb": 29.1,
+    "fear_greed": 13,
+    "eth_gas_gwei": 0.14,
+    "btc_mempool_vmb": 29.33,
     "btc_dom_pct": 57.82,
-    "mcap_chg24h": -4.49
+    "mcap_chg24h": -4.51
   }
 }
