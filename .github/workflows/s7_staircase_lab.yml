@@ -1,0 +1,41 @@
+name: OMEGA S7 Mid-Cap Staircase Lab v1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback Days (730 = 2 Full Years)"
+        required: true
+        default: "730"
+
+jobs:
+  s7-staircase-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install --quiet requests
+
+      - name: Run Offline Self-Test
+        run: python3 S7_MIDCAP_STAIRCASE_LAB_v1_0.py --self-test
+
+      - name: Run 2-Year 80-Coin Mid-Cap Staircase Lab
+        run: |
+          python3 S7_MIDCAP_STAIRCASE_LAB_v1_0.py \
+            --days "${{ github.event.inputs.days || '730' }}" \
+            --out "OMEGA_S7_MIDCAP_STAIRCASE_REPORT.txt"
+
+      - name: Upload Staircase Lab Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: omega-s7-staircase-report
+          path: OMEGA_S7_MIDCAP_STAIRCASE_REPORT.txt
+          retention-days: 30
