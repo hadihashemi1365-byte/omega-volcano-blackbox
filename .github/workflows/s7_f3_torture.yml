@@ -1,21 +1,17 @@
-name: OMEGA S7 1H Institutional Lab v1.1
+name: OMEGA S7 F3 2-Year Torture Audit v1.0
 
 on:
   workflow_dispatch:
     inputs:
       days:
-        description: "Lookback Days (e.g. 365 for 1 Year, 730 for 2 Years)"
+        description: "Lookback Days (730 = 2 Full Years)"
         required: true
-        default: "365"
-      fee_rt:
-        description: "Round-Trip Fee (0.0026 USDT / 0.0050 IRT)"
-        required: true
-        default: "0.0026"
+        default: "730"
 
 jobs:
-  run-s7-lab:
+  f3-torture-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,18 +25,17 @@ jobs:
         run: pip install --quiet requests
 
       - name: Run Offline Self-Test
-        run: python3 S7_1H_INSTITUTIONAL_LAB_v1_1.py --self-test
+        run: python3 S7_F3_TORTURE_AUDIT_v1_0.py --self-test
 
-      - name: Run 1H Multi-Factor & Quality-Decay Backtest
+      - name: Run 2-Year F3 Torture & Ablation Audit
         run: |
-          python3 S7_1H_INSTITUTIONAL_LAB_v1_1.py \
-            --days "${{ github.event.inputs.days || '365' }}" \
-            --fee "${{ github.event.inputs.fee_rt || '0.0026' }}" \
-            --out "OMEGA_S7_1H_INSTITUTIONAL_REPORT.txt"
+          python3 S7_F3_TORTURE_AUDIT_v1_0.py \
+            --days "${{ github.event.inputs.days || '730' }}" \
+            --out "OMEGA_S7_F3_TORTURE_REPORT.txt"
 
-      - name: Upload Report Artifact
+      - name: Upload Torture Audit Report
         uses: actions/upload-artifact@v4
         with:
-          name: omega-s7-1h-institutional-report
-          path: OMEGA_S7_1H_INSTITUTIONAL_REPORT.txt
+          name: omega-s7-f3-torture-report
+          path: OMEGA_S7_F3_TORTURE_REPORT.txt
           retention-days: 30
