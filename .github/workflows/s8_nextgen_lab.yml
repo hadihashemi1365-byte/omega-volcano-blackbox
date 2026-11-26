@@ -1,0 +1,41 @@
+name: OMEGA S8 Next-Gen 1H/4H Lab v1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback Days (730 = 2 Full Years)"
+        required: true
+        default: "730"
+
+jobs:
+  s8-nextgen-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install --quiet requests
+
+      - name: Run Offline Self-Test
+        run: python3 S8_OMEGA_NEXTGEN_LAB_v1_0.py --self-test
+
+      - name: Run 2-Year 120-Coin Next-Gen Lab
+        run: |
+          python3 S8_OMEGA_NEXTGEN_LAB_v1_0.py \
+            --days "${{ github.event.inputs.days || '730' }}" \
+            --out "OMEGA_S8_NEXTGEN_REPORT.txt"
+
+      - name: Upload S8 Next-Gen Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: omega-s8-nextgen-report
+          path: OMEGA_S8_NEXTGEN_REPORT.txt
+          retention-days: 30
