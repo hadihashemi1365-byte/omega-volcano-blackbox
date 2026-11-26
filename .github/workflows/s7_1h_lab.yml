@@ -1,0 +1,46 @@
+name: OMEGA S7 1H Institutional Lab v1.1
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback Days (e.g. 365 for 1 Year, 730 for 2 Years)"
+        required: true
+        default: "365"
+      fee_rt:
+        description: "Round-Trip Fee (0.0026 USDT / 0.0050 IRT)"
+        required: true
+        default: "0.0026"
+
+jobs:
+  run-s7-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install --quiet requests
+
+      - name: Run Offline Self-Test
+        run: python3 S7_1H_INSTITUTIONAL_LAB_v1_1.py --self-test
+
+      - name: Run 1H Multi-Factor & Quality-Decay Backtest
+        run: |
+          python3 S7_1H_INSTITUTIONAL_LAB_v1_1.py \
+            --days "${{ github.event.inputs.days || '365' }}" \
+            --fee "${{ github.event.inputs.fee_rt || '0.0026' }}" \
+            --out "OMEGA_S7_1H_INSTITUTIONAL_REPORT.txt"
+
+      - name: Upload Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omega-s7-1h-institutional-report
+          path: OMEGA_S7_1H_INSTITUTIONAL_REPORT.txt
+          retention-days: 30
