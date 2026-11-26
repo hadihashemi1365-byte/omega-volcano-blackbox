@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """
-OMEGA S7 — F3_OI_FRESH_TREND_QDECAY 2-YEAR TORTURE & ABLATION AUDIT v1.0
-========================================================================
-Runs 4 institutional certification batteries on the 1H champion candidate
-F3_OI_FRESH_TREND_QDECAY across 730 days (2 full years, ~17,520 1H bars):
-  1. 3-Fee-Tier Stress Test (0.26% USDT / 0.50% IRT / 0.75% Stress) + Half-Year Regimes
-  2. Exit Ablation Matrix (FULL vs NO_Q_STALL / NO_Q_FLOW / NO_Q_BTC / NO_OI_EXHAUST / BASE)
-     + Per-Exit-Reason PnL Attribution
-  3. Per-Coin Attribution + Leave-2-Out Universe Torture
-  4. 3x3 Parameter Plateau (HH_LEN x OI_6H_MIN) Anti-Overfitting Grid
-  5. Live Endpoint Feasibility Probe (Binance Vision / Binance FAPI / OKX / Deribit)
+OMEGA S7 4H SWING & VOLCANO-IGNITION LAB v1.0 (2-YEAR AUDIT)
+============================================================
+Builds on two empirical discoveries:
+  1. 1H Torture Audit (17,521 bars): slowing lookback (36h->48h->60h) monotonically
+     improved PF/OOS/MaxDD; Q_BTC and OI_EXHAUST added edge while Q_STALL/Q_FLOW hurt.
+  2. Volcano Black-Box Forensic (4 days, 17,688 rows): pre-explosion signature is
+     aggressive Taker Buy Ratio (0.657 vs 0.495), positive Net Buy Flow, and
+     negative/low Funding Rate — with payoffs unfolding over 4H (+7.5% to +12.25%).
 
-Zero API keys required. Strictly causal Next-Open, Stop-First (Gap-Protected), 70% ATR Floor.
+Tests 4 orthogonal 4H spot-only engines over 730 days (~4,380 4H bars) across
+20 deep Nobitex USDT pairs at BOTH 0.26% (USDT) and 0.50% (IRT) RT fees, plus
+Half-Year Regimes, Per-Coin Attribution, and Leave-2-Out for the top engine.
+
+Execution Rigor:
+  - 100% Spot-Only, Strict Next-Open, Stop-First (Gap-Protected), 70% ATR Floor
+  - Causal Chandelier Trailing Stop, 70/30 Chronological IS/OOS Split
+  - 100% Free Public Archives (data.binance.vision + Deribit DVOL), zero API keys.
 """
 
 import argparse
@@ -33,10 +38,11 @@ except ImportError:
     HTTPAdapter = None
 
 VERSION = "1.0"
-UNIVERSE_15 = [
+UNIVERSE_20 = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT",
     "LTCUSDT", "NEARUSDT", "TAOUSDT", "ZECUSDT", "AAVEUSDT",
+    "TIAUSDT", "ENAUSDT", "STRKUSDT", "TONUSDT", "RENDERUSDT",
 ]
 BINANCE_VISION = "https://data.binance.vision/data"
 BINANCE_REST_HOSTS = [
@@ -60,7 +66,7 @@ def _get_session():
         ad = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=2)
         s.mount("https://", ad)
         s.mount("http://", ad)
-    s.headers.update({"User-Agent": f"OMEGA-S7-F3-Audit/{VERSION}"})
+    s.headers.update({"User-Agent": f"OMEGA-S7-4H-Lab/{VERSION}"})
     return s
 
 
@@ -78,15 +84,14 @@ def _month_list(start_dt: dt.datetime, end_dt: dt.datetime) -> List[Tuple[int, i
 
 def _day_list(start_dt: dt.datetime, end_dt: dt.datetime) -> List[dt.date]:
     out = []
-    cur = start_dt.date()
-    end = end_dt.date()
+    cur, end = start_dt.date(), end_dt.date()
     while cur <= end:
         out.append(cur)
         cur += dt.timedelta(days=1)
     return out
 
 
-def _fetch_zip_csv_rows(sess, url: str, timeout: int = 18) -> List[List[str]]:
+def _fetch_zip_csv_rows(sess, url: str, timeout: int = 16) -> List[List[str]]:
     try:
         r = sess.get(url, timeout=timeout)
         if r.status_code != 200 or not r.content:
@@ -99,17 +104,17 @@ def _fetch_zip_csv_rows(sess, url: str, timeout: int = 18) -> List[List[str]]:
 
 
 # ==============================================================================
-# 1. FREE ARCHIVE FETCHERS (ONLY WHAT F3 NEEDS -> 2X FASTER FOR 730 DAYS!)
+# 1. FREE 4H HISTORICAL ARCHIVE FETCHERS
 # ==============================================================================
 
-def fetch_spot_1h_klines(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, dict]:
+def fetch_spot_4h_klines(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, dict]:
     sess = _get_session()
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
     bars: Dict[int, dict] = {}
 
     for y, m in _month_list(start_dt, end_dt):
-        url = f"{BINANCE_VISION}/spot/monthly/klines/{sym}/1h/{sym}-1h-{y:04d}-{m:02d}.zip"
+        url = f"{BINANCE_VISION}/spot/monthly/klines/{sym}/4h/{sym}-4h-{y:04d}-{m:02d}.zip"
         for row in _fetch_zip_csv_rows(sess, url):
             if len(row) < 11 or not row[0]:
                 continue
@@ -131,14 +136,14 @@ def fetch_spot_1h_klines(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -
             except Exception:
                 continue
 
-    # Tail fill current incomplete month via REST (data-api.binance.vision has no US geo-block)
-    last_ts = max(bars.keys()) + 3600000 if bars else start_ms
-    if last_ts < end_ms - 3600000:
+    # Tail fill current incomplete month via REST (data-api.binance.vision = no US geo-block)
+    last_ts = max(bars.keys()) + 14400000 if bars else start_ms
+    if last_ts < end_ms - 14400000:
         for host in BINANCE_REST_HOSTS:
             try:
                 cur = last_ts
                 while cur < end_ms:
-                    url = f"{host}/api/v3/klines?symbol={sym}&interval=1h&startTime={cur}&limit=1000"
+                    url = f"{host}/api/v3/klines?symbol={sym}&interval=4h&startTime={cur}&limit=1000"
                     r = sess.get(url, timeout=15)
                     if r.status_code != 200:
                         break
@@ -158,7 +163,7 @@ def fetch_spot_1h_klines(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -
                             "qv": float(k[7]), "nt": max(1.0, float(k[8])),
                             "tbqv": float(k[10]),
                         }
-                    nxt = int(data[-1][0]) + 3600000
+                    nxt = int(data[-1][0]) + 14400000
                     if nxt <= cur or len(data) < 1000:
                         break
                     cur = nxt
@@ -169,10 +174,10 @@ def fetch_spot_1h_klines(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -
     return bars
 
 
-def fetch_futures_oi_1h(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, float]:
-    """Fetch 5m futures metrics daily ZIPs and extract hourly OI (USD)."""
+def fetch_futures_oi_4h(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, float]:
+    """Fetch 5m futures metrics daily ZIPs and bucket to 4H close OI (USD)."""
     sess = _get_session()
-    hourly: Dict[int, float] = {}
+    out_4h: Dict[int, float] = {}
     days = _day_list(start_dt, end_dt)
 
     def _one_day(d: dt.date):
@@ -183,20 +188,38 @@ def fetch_futures_oi_1h(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) ->
                 continue
             try:
                 t_dt = dt.datetime.strptime(row[0][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc)
-                hr_ms = int(t_dt.replace(minute=0, second=0).timestamp() * 1000)
+                b_hr = (t_dt.hour // 4) * 4
+                b_ms = int(t_dt.replace(hour=b_hr, minute=0, second=0).timestamp() * 1000)
                 if row[3]:
-                    out[hr_ms] = float(row[3])
+                    out[b_ms] = float(row[3])
             except Exception:
                 continue
         return out
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=24) as ex:
         for res in ex.map(_one_day, days):
-            hourly.update(res)
-    return hourly
+            out_4h.update(res)
+    return out_4h
 
 
-def fetch_deribit_dvol_1h(start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, float]:
+def fetch_futures_funding_4h(sym: str, start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, float]:
+    sess = _get_session()
+    funding: Dict[int, float] = {}
+    for y, m in _month_list(start_dt, end_dt):
+        url = f"{BINANCE_VISION}/futures/um/monthly/fundingRate/{sym}/{sym}-fundingRate-{y:04d}-{m:02d}.zip"
+        for row in _fetch_zip_csv_rows(sess, url):
+            if len(row) < 3 or not row[0] or not row[0][0].isdigit():
+                continue
+            try:
+                ts = int(float(row[0]))
+                b_ms = (ts // 14400000) * 14400000
+                funding[b_ms] = float(row[2])
+            except Exception:
+                continue
+    return funding
+
+
+def fetch_deribit_dvol_4h(start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[int, float]:
     sess = _get_session()
     out: Dict[int, float] = {}
     cur_ms = int(start_dt.timestamp() * 1000)
@@ -213,7 +236,8 @@ def fetch_deribit_dvol_1h(start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[in
             if r.status_code == 200:
                 for row in r.json().get("result", {}).get("data", []):
                     if len(row) >= 5:
-                        out[int(row[0])] = float(row[4])
+                        b_ms = (int(row[0]) // 14400000) * 14400000
+                        out[b_ms] = float(row[4])
         except Exception:
             pass
         cur_ms = nxt_ms
@@ -221,27 +245,8 @@ def fetch_deribit_dvol_1h(start_dt: dt.datetime, end_dt: dt.datetime) -> Dict[in
     return out
 
 
-def probe_live_endpoints() -> List[str]:
-    """Check which live OI/Klines/DVOL endpoints work directly from GitHub Actions runner."""
-    sess = _get_session()
-    probes = [
-        ("Binance Vision Spot 1H", "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=2"),
-        ("Binance FAPI Live OI",   "https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h&limit=2"),
-        ("OKX Live OI Fallback",   "https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-history?instId=BTC-USDT-SWAP&period=1H&limit=2"),
-        ("Deribit Live DVOL",      "https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=BTC&resolution=3600&start_timestamp=1700000000000&end_timestamp=1700010000000"),
-    ]
-    lines = []
-    for label, url in probes:
-        try:
-            r = sess.get(url, timeout=8)
-            lines.append(f"  {label:24s}: HTTP {r.status_code} ({'OK' if r.status_code == 200 else 'BLOCKED/ERR'})")
-        except Exception as e:
-            lines.append(f"  {label:24s}: ERROR ({type(e).__name__})")
-    return lines
-
-
 # ==============================================================================
-# 2. CAUSAL INDICATORS & DATASET BUILDER
+# 2. CAUSAL INDICATORS & DATASET ALIGNMENT
 # ==============================================================================
 
 def calc_ema(arr: List[float], length: int) -> List[float]:
@@ -279,7 +284,6 @@ def calc_atr(h: List[float], l: List[float], c: List[float], length: int) -> Lis
 
 
 def calc_hh(h: List[float], length: int) -> List[float]:
-    """Strictly prior N-bar high (excludes bar i -> zero look-ahead)."""
     T = len(h)
     out = [0.0] * T
     for i in range(T):
@@ -287,7 +291,12 @@ def calc_hh(h: List[float], length: int) -> List[float]:
     return out
 
 
-def build_dataset(raw_k: Dict[str, Dict[int, dict]], raw_oi: Dict[str, Dict[int, float]], dvol_map: Dict[int, float]) -> dict:
+def build_dataset_4h(
+    raw_k: Dict[str, Dict[int, dict]],
+    raw_oi: Dict[str, Dict[int, float]],
+    raw_fund: Dict[str, Dict[int, float]],
+    dvol_map: Dict[int, float],
+) -> dict:
     btc_ts = sorted(raw_k["BTCUSDT"].keys())
     T = len(btc_ts)
     syms = [s for s in raw_k.keys() if len(raw_k[s]) >= int(T * 0.65)]
@@ -296,41 +305,58 @@ def build_dataset(raw_k: Dict[str, Dict[int, dict]], raw_oi: Dict[str, Dict[int,
     for s in syms:
         km = raw_k[s]
         om = raw_oi.get(s, {})
-        o, h, l, c, qv, tbr, avg_sz, oi, valid = [], [], [], [], [], [], [], [], []
-        last_c, last_oi = None, 0.0
+        fm = raw_fund.get(s, {})
+        o, h, l, c, qv, tbr, clv, avg_sz, net_flow, oi, fund, valid = [], [], [], [], [], [], [], [], [], [], [], []
+        last_c, last_oi, last_f = None, 0.0, 0.0
         for ts in btc_ts:
             b = km.get(ts)
             if b is not None:
                 o.append(b["o"]); h.append(b["h"]); l.append(b["l"]); c.append(b["c"])
                 qv.append(b["qv"])
                 rng = b["h"] - b["l"]
-                clv = (b["c"] - b["l"]) / rng if rng > 0 else 0.5
-                tbr.append(min(1.0, max(0.0, b["tbqv"] / b["qv"])) if b["qv"] > 0 else clv)
+                c_lv = (b["c"] - b["l"]) / rng if rng > 0 else 0.5
+                clv.append(c_lv)
+                r_tbr = min(1.0, max(0.0, b["tbqv"] / b["qv"])) if b["qv"] > 0 else c_lv
+                tbr.append(r_tbr)
                 avg_sz.append(b["qv"] / max(1.0, b["nt"]))
+                net_flow.append((2.0 * r_tbr - 1.0) * b["qv"])
                 last_c = b["c"]
                 valid.append(True)
             else:
                 px = last_c if last_c is not None else 0.0
                 o.append(px); h.append(px); l.append(px); c.append(px)
-                qv.append(0.0); tbr.append(0.5); avg_sz.append(0.0)
+                qv.append(0.0); tbr.append(0.5); clv.append(0.5)
+                avg_sz.append(0.0); net_flow.append(0.0)
                 valid.append(False)
             if ts in om:
                 last_oi = om[ts]
-            oi.append(last_oi)
+            if ts in fm:
+                last_f = fm[ts]
+            oi.append(last_oi); fund.append(last_f)
 
+        ema6 = calc_ema(c, 6)
         ema12 = calc_ema(c, 12)
         ema24 = calc_ema(c, 24)
         atr14 = calc_atr(h, l, c, 14)
-        atr48 = calc_sma(atr14, 48)
+        atr42 = calc_sma(atr14, 42)
         vol20 = calc_sma(qv, 20)
-        avg_sz24 = calc_sma(avg_sz, 24)
-        sz_ratio = [avg_sz[i] / max(1e-9, avg_sz24[i]) for i in range(T)]
+        avg_sz18 = calc_sma(avg_sz, 18)
+        tbr3 = calc_sma(tbr, 3)
+        sz_ratio = [avg_sz[i] / max(1e-9, avg_sz18[i]) for i in range(T)]
+
+        # Rolling 12-bar (48h) return volatility
+        vol12 = [0.02] * T
+        for i in range(12, T):
+            rs = [(c[j] - c[j - 1]) / c[j - 1] for j in range(i - 11, i + 1) if c[j - 1] > 0]
+            if rs:
+                m = sum(rs) / len(rs)
+                vol12[i] = math.sqrt(max(1e-10, sum((x - m) ** 2 for x in rs) / len(rs)))
 
         series[s] = {
-            "o": o, "h": h, "l": l, "c": c, "qv": qv, "tbr": tbr, "valid": valid,
-            "ema12": ema12, "ema24": ema24, "atr14": atr14, "atr48": atr48,
-            "vol20": vol20, "oi": oi, "sz_ratio": sz_ratio,
-            "hh36": calc_hh(h, 36), "hh48": calc_hh(h, 48), "hh60": calc_hh(h, 60),
+            "o": o, "h": h, "l": l, "c": c, "qv": qv, "tbr": tbr, "tbr3": tbr3, "clv": clv,
+            "net_flow": net_flow, "valid": valid, "ema6": ema6, "ema12": ema12, "ema24": ema24,
+            "atr14": atr14, "atr42": atr42, "vol20": vol20, "vol12": vol12, "oi": oi, "fund": fund,
+            "sz_ratio": sz_ratio, "hh15": calc_hh(h, 15),
         }
 
     dvol = [50.0] * T
@@ -346,7 +372,7 @@ def build_dataset(raw_k: Dict[str, Dict[int, dict]], raw_oi: Dict[str, Dict[int,
         for s in syms:
             if series[s]["valid"][i]:
                 cnt += 1
-                if series[s]["c"][i] > series[s]["ema24"][i]:
+                if series[s]["c"][i] > series[s]["ema12"][i]:
                     above += 1
         if cnt > 0:
             breadth_ema[i] = above / cnt
@@ -355,18 +381,15 @@ def build_dataset(raw_k: Dict[str, Dict[int, dict]], raw_oi: Dict[str, Dict[int,
 
 
 # ==============================================================================
-# 3. F3 CONFIGURABLE SIMULATOR (FOR ABLATION, LEAVE-2-OUT, AND PLATEAU)
+# 3. 4H PORTFOLIO SIMULATORS (STRICT NEXT-OPEN, STOP-FIRST GAP-PROTECTED)
 # ==============================================================================
 
-def run_f3(
+def run_4h_event_engine(
     ds: dict,
-    fee_rt: float = 0.0026,
-    hh_key: str = "hh48",
-    oi_6h_min: float = 0.012,
-    q_stall: bool = True,
-    q_flow: bool = True,
-    q_btc: bool = True,
-    q_oi_exhaust: bool = True,
+    fee_rt: float,
+    max_slots: int,
+    signal_fn,
+    exit_cfg: dict,
     exclude_syms: Optional[Set[str]] = None,
 ) -> dict:
     T = ds["T"]
@@ -380,8 +403,7 @@ def run_f3(
     cash = 1.0
     open_pos = []
     trades = []
-    start_idx = 80
-    max_slots = 3
+    start_idx = 50
 
     for i in range(start_idx, T):
         # 1) Manage open positions
@@ -398,22 +420,16 @@ def run_f3(
             elif d["l"][i] <= pos["stop"]:
                 exit_px = pos["stop"]
                 reason = "TRAIL" if pos["be"] else "STOP"
-            elif i - pos["entry_i"] >= 48:
+            elif i - pos["entry_i"] >= exit_cfg["max_hold"]:
                 exit_px = d["c"][i]
                 reason = "TIME"
             elif i == T - 1:
                 exit_px = d["c"][i]
                 reason = "END_CLOSE"
 
-            if exit_px is None:
-                held_h = i - pos["entry_i"]
-                cur_mfe = (max(pos["hh"], d["h"][i]) - pos["entry_px"]) / pos["entry_px"]
-                cur_ret = (d["c"][i] - pos["entry_px"]) / pos["entry_px"]
-                if q_stall and held_h >= 5 and cur_mfe < 0.008 and cur_ret < 0.004:
-                    exit_px, reason = d["c"][i], "Q_STALL"
-                elif q_flow and held_h >= 2 and d["tbr"][i] < 0.45 and d["tbr"][i - 1] < 0.45:
-                    exit_px, reason = d["c"][i], "Q_FLOW"
-                elif q_btc and held_h >= 1 and btc["c"][i] < btc["ema12"][i] and btc["tbr"][i] < 0.45:
+            # Proven Q_BTC exit only (dropped losing Q_STALL/Q_FLOW from 1H ablation)
+            if exit_px is None and exit_cfg.get("q_btc", False):
+                if i - pos["entry_i"] >= 1 and btc["c"][i] < btc["ema6"][i] and btc["tbr"][i] < 0.44:
                     exit_px, reason = d["c"][i], "Q_BTC"
 
             if exit_px is not None:
@@ -431,15 +447,15 @@ def run_f3(
                 if d["h"][i] > pos["hh"]:
                     pos["hh"] = d["h"][i]
                 gain = (pos["hh"] - pos["entry_px"]) / pos["entry_px"]
-                if not pos["be"] and gain >= 0.022:
+                if not pos["be"] and gain >= exit_cfg["be_trig"]:
                     pos["be"] = True
-                    pos["stop"] = max(pos["stop"], pos["entry_px"] * (1.0 + fee_rt + 0.001))
+                    pos["stop"] = max(pos["stop"], pos["entry_px"] * (1.0 + fee_rt + 0.002))
                 if pos["be"]:
-                    eff_atr = max(d["atr14"][i], 0.70 * d["atr48"][i])
-                    trail_mult = 2.4
-                    if q_oi_exhaust and gain >= 0.02 and d["oi"][i - 3] > 0:
-                        if (d["oi"][i] - d["oi"][i - 3]) / d["oi"][i - 3] < -0.015:
-                            trail_mult = 1.2
+                    eff_atr = max(d["atr14"][i], 0.70 * d["atr42"][i])
+                    trail_mult = exit_cfg["trail_atr"]
+                    if exit_cfg.get("oi_exhaust", False) and gain >= 0.03 and d["oi"][i - 2] > 0:
+                        if (d["oi"][i] - d["oi"][i - 2]) / d["oi"][i - 2] < -0.02:
+                            trail_mult = 1.4
                     trail_px = pos["hh"] - trail_mult * eff_atr
                     if trail_px > pos["stop"]:
                         pos["stop"] = trail_px
@@ -452,55 +468,187 @@ def run_f3(
             mtm += pos["weight"] * (px / pos["entry_px"])
         eq[i] = mtm
 
-        # 3) F3 Entry at bar i close -> fill at bar i+1 OPEN
+        # 3) Entries at bar i close -> filled strictly at bar i+1 OPEN
         if i < T - 2 and len(open_pos) < max_slots:
-            if btc["c"][i] > btc["ema24"][i] and ds["breadth_ema"][i] >= 0.55 and ds["dvol"][i] <= 65.0:
-                held_set = {x["sym"] for x in open_pos}
-                cands = []
-                for s in active_syms:
-                    if s in held_set:
-                        continue
-                    d = ser[s]
-                    if not d["valid"][i] or not d["valid"][i + 1]:
-                        continue
-                    hh_val = d[hh_key][i]
-                    if d["c"][i] <= hh_val or hh_val <= 0:
-                        continue
-                    if d["oi"][i - 6] > 0:
-                        if (d["oi"][i] - d["oi"][i - 6]) / d["oi"][i - 6] < oi_6h_min:
-                            continue
-                    if d["tbr"][i] < 0.54 or d["sz_ratio"][i] < 1.15 or d["qv"][i] < 1.3 * d["vol20"][i]:
-                        continue
-                    sc = (d["c"][i] / hh_val - 1.0) + d["sz_ratio"][i]
+            held = {x["sym"] for x in open_pos}
+            cands = []
+            for s in active_syms:
+                if s in held:
+                    continue
+                d = ser[s]
+                if not d["valid"][i] or not d["valid"][i + 1]:
+                    continue
+                sc = signal_fn(s, d, i, ds)
+                if sc is not None and math.isfinite(sc):
                     cands.append((sc, s))
-
-                cands.sort(key=lambda x: x[0], reverse=True)
-                for _, s in cands[: max_slots - len(open_pos)]:
-                    d = ser[s]
-                    entry_px = d["o"][i + 1]
-                    if entry_px <= 0:
-                        continue
-                    eff_atr = max(d["atr14"][i], 0.70 * d["atr48"][i])
-                    if eff_atr <= 0:
-                        eff_atr = entry_px * 0.015
-                    stop_px = max(entry_px * 0.94, entry_px - 2.2 * eff_atr)
-                    alloc = min(cash, mtm / max_slots)
-                    if alloc <= 1e-6:
-                        break
-                    cash -= alloc
-                    open_pos.append({
-                        "sym": s, "entry_i": i + 1, "entry_px": entry_px,
-                        "stop": stop_px, "be": False, "hh": entry_px, "weight": alloc,
-                    })
+            cands.sort(key=lambda x: x[0], reverse=True)
+            for _, s in cands[: max_slots - len(open_pos)]:
+                d = ser[s]
+                entry_px = d["o"][i + 1]
+                if entry_px <= 0:
+                    continue
+                eff_atr = max(d["atr14"][i], 0.70 * d["atr42"][i])
+                if eff_atr <= 0:
+                    eff_atr = entry_px * 0.025
+                stop_px = entry_px - exit_cfg["stop_atr"] * eff_atr
+                if exit_cfg.get("use_swing_low2", False):
+                    stop_px = min(stop_px, min(d["l"][i], d["l"][i - 1]) * 0.996)
+                stop_px = max(stop_px, entry_px * 0.92)  # -8% hard cap
+                alloc = min(cash, mtm / max_slots)
+                if alloc <= 1e-6:
+                    break
+                cash -= alloc
+                open_pos.append({
+                    "sym": s, "entry_i": i + 1, "entry_px": entry_px,
+                    "stop": stop_px, "be": False, "hh": entry_px, "weight": alloc,
+                })
 
     return {"eq": eq, "trades": trades}
 
 
+def run_4h_rotation_h4(ds: dict, fee_rt: float, exclude_syms: Optional[Set[str]] = None) -> dict:
+    """H4: 12-Hour (every 3 bars of 4H) Cross-Sectional Relative Strength + Taker Flow."""
+    T = ds["T"]
+    ts_arr = ds["ts"]
+    ser = ds["series"]
+    btc = ser["BTCUSDT"]
+    excl = exclude_syms or set()
+    active_syms = [s for s in ds["syms"] if s not in excl]
+
+    eq = [1.0] * T
+    cash = 1.0
+    held: Dict[str, dict] = {}
+    trades = []
+    start_idx = 50
+
+    for i in range(start_idx, T):
+        if i == T - 1 and held:
+            for s, pos in list(held.items()):
+                d = ser[s]
+                px = d["c"][i] if d["valid"][i] else pos["entry_px"]
+                net = (px / pos["entry_px"]) * (1.0 - fee_rt) - 1.0
+                cash += pos["weight"] * (1.0 + net)
+                trades.append({"sym": s.replace("USDT", ""), "entry_i": pos["entry_i"], "exit_i": i, "entry_ts": pos["entry_ts"], "exit_ts": ts_arr[i], "net": net, "reason": "END_CLOSE"})
+            held.clear()
+
+        mtm = cash
+        for s, pos in held.items():
+            d = ser[s]
+            px = d["c"][i] if d["valid"][i] else pos["entry_px"]
+            mtm += pos["weight"] * (px / pos["entry_px"])
+        eq[i] = mtm
+
+        # Rebalance every 3 bars (12H)
+        if (i % 3 == 0) and i < T - 2:
+            btc_bull = btc["c"][i] > btc["ema12"][i] and ds["dvol"][i] <= 68.0
+            ranked = []
+            if btc_bull:
+                for s in active_syms:
+                    d = ser[s]
+                    if not d["valid"][i] or not d["valid"][i + 1]:
+                        continue
+                    # Skip last 4H bar: return from i-12 (48h ago) to i-1
+                    r_skip1 = (d["c"][i - 1] - d["c"][i - 12]) / d["c"][i - 12] if d["c"][i - 12] > 0 else 0.0
+                    score = r_skip1 / max(0.01, d["vol12"][i])
+                    if r_skip1 > 0.02 and d["tbr3"][i] >= 0.53 and d["c"][i] > d["ema12"][i]:
+                        ranked.append((score, s))
+                ranked.sort(key=lambda x: x[0], reverse=True)
+
+            top5 = {s for _, s in ranked[:5]}
+            top2 = [s for _, s in ranked[:2]]
+
+            for s in list(held.keys()):
+                if not btc_bull or s not in top5:
+                    pos = held.pop(s)
+                    d = ser[s]
+                    exit_px = d["o"][i + 1] if d["valid"][i + 1] else pos["entry_px"]
+                    net = (exit_px / pos["entry_px"]) * (1.0 - fee_rt) - 1.0
+                    cash += pos["weight"] * (1.0 + net)
+                    trades.append({
+                        "sym": s.replace("USDT", ""), "entry_i": pos["entry_i"], "exit_i": i + 1,
+                        "entry_ts": pos["entry_ts"], "exit_ts": ts_arr[i + 1],
+                        "net": net, "reason": "BTC_REGIME" if not btc_bull else "RANK_EXIT",
+                    })
+
+            if btc_bull and len(held) < 2:
+                cur_mtm = cash + sum(p["weight"] for p in held.values())
+                for s in top2:
+                    if len(held) >= 2:
+                        break
+                    if s in held:
+                        continue
+                    d = ser[s]
+                    entry_px = d["o"][i + 1]
+                    if entry_px <= 0:
+                        continue
+                    alloc = min(cash, cur_mtm / 2.0)
+                    if alloc <= 1e-6:
+                        break
+                    cash -= alloc
+                    held[s] = {"entry_i": i + 1, "entry_ts": ts_arr[i + 1], "entry_px": entry_px, "weight": alloc}
+
+    return {"eq": eq, "trades": trades}
+
+
+# ==============================================================================
+# 4. SIGNAL FUNCTIONS FOR H1, H2, H3
+# ==============================================================================
+
+def sig_h1_oi_breakout(s, d, i, ds):
+    """H1: 4H Evolution of F3 (60h Breakout + Fresh OI + Whale Size + Breadth + Calm DVOL)."""
+    btc = ds["series"]["BTCUSDT"]
+    if btc["c"][i] <= btc["ema12"][i] or ds["breadth_ema"][i] < 0.50 or ds["dvol"][i] > 65.0:
+        return None
+    if d["c"][i] <= d["hh15"][i] or d["hh15"][i] <= 0:
+        return None
+    if d["oi"][i - 2] > 0:
+        if (d["oi"][i] - d["oi"][i - 2]) / d["oi"][i - 2] < 0.015:
+            return None
+    if d["tbr"][i] < 0.55 or d["sz_ratio"][i] < 1.15 or d["qv"][i] < 1.3 * d["vol20"][i]:
+        return None
+    return (d["c"][i] / d["hh15"][i] - 1.0) + d["sz_ratio"][i]
+
+
+def sig_h2_volcano_ignition(s, d, i, ds):
+    """H2: Volcano Black-Box 4H Ignition (Extreme TBR >= 0.60 + Net Buy Flow + Vol Surge + Low/Neg FR)."""
+    btc = ds["series"]["BTCUSDT"]
+    btc_r1 = (btc["c"][i] - btc["o"][i]) / btc["o"][i] if btc["o"][i] > 0 else 0.0
+    if btc_r1 < -0.015 or ds["dvol"][i] > 68.0:
+        return None
+    flow3 = d["net_flow"][i] + d["net_flow"][i - 1] + d["net_flow"][i - 2]
+    if d["tbr"][i] < 0.60 or flow3 <= 0 or d["c"][i] <= d["o"][i]:
+        return None
+    if d["qv"][i] < 1.6 * d["vol20"][i]:
+        return None
+    if d["fund"][i] > 0.00015:  # Avoid overcrowded positive funding
+        return None
+    return d["tbr"][i] + (d["qv"][i] / max(1.0, d["vol20"][i])) * 0.2
+
+
+def sig_h3_mid_dip_snap(s, d, i, ds):
+    """H3: Moderate Dip Snap-Back (-5% to -11% 24h dip + 4H Taker Absorption + BTC Green Bar)."""
+    btc = ds["series"]["BTCUSDT"]
+    if btc["c"][i] <= btc["o"][i]:  # BTC 4H candle must be green (bounce confirmed)
+        return None
+    r6 = (d["l"][i - 1] - d["c"][i - 6]) / d["c"][i - 6] if d["c"][i - 6] > 0 else 0.0
+    if r6 > -0.05 or r6 < -0.14:
+        return None
+    if d["c"][i] <= d["o"][i] or d["clv"][i] < 0.58 or d["tbr"][i] < 0.58:
+        return None
+    if d["qv"][i] < 1.2 * d["vol20"][i]:
+        return None
+    return d["tbr"][i] - r6
+
+
+# ==============================================================================
+# 5. METRICS & RUNNER
+# ==============================================================================
+
 def summarize(label: str, res: dict, ds: dict) -> dict:
     tr, eq = res["trades"], res["eq"]
     n = len(tr)
-    split_idx = int(80 + (ds["T"] - 80) * 0.70)
-    days = max(1.0, (ds["ts"][-1] - ds["ts"][80]) / 86400000.0)
+    split_idx = int(50 + (ds["T"] - 50) * 0.70)
+    days = max(1.0, (ds["ts"][-1] - ds["ts"][50]) / 86400000.0)
     per_mo = (n / days) * 30.0
     wins = [x["net"] for x in tr if x["net"] > 0]
     losses = [abs(x["net"]) for x in tr if x["net"] <= 0]
@@ -517,8 +665,8 @@ def summarize(label: str, res: dict, ds: dict) -> dict:
     ogp, ogl = sum(v for v in oos if v > 0), sum(abs(v) for v in oos if v <= 0)
     oos_pf = (ogp / ogl) if ogl > 0 else (99.0 if ogp > 0 else 0.0)
 
-    peak, max_dd, rets = eq[80], 0.0, []
-    for k in range(81, len(eq)):
+    peak, max_dd, rets = eq[50], 0.0, []
+    for k in range(51, len(eq)):
         if eq[k] > peak:
             peak = eq[k]
         dd = (eq[k] - peak) / peak
@@ -528,13 +676,13 @@ def summarize(label: str, res: dict, ds: dict) -> dict:
             rets.append((eq[k] - eq[k - 1]) / eq[k - 1])
     mr = sum(rets) / max(1, len(rets))
     vr = sum((r - mr) ** 2 for r in rets) / max(1, len(rets))
-    sh = (mr / math.sqrt(vr)) * math.sqrt(8760.0) if vr > 0 else 0.0
+    sh = (mr / math.sqrt(vr)) * math.sqrt(2190.0) if vr > 0 else 0.0  # 2190 4H bars/year
     ret = (eq[-1] - 1.0) * 100.0
 
     verdict = "NO-GO"
-    if n >= 60 and pf >= 1.25 and oos_pf >= 1.20 and ex5 >= 1.10 and max_dd > -0.18 and ret > 0:
+    if n >= 50 and pf >= 1.30 and oos_pf >= 1.25 and ex5 >= 1.15 and max_dd > -0.18 and ret > 0:
         verdict = "GO"
-    elif n >= 40 and pf >= 1.12 and oos_pf >= 1.05 and ret > 0:
+    elif n >= 30 and pf >= 1.15 and oos_pf >= 1.10 and ret > 0:
         verdict = "WATCH"
 
     return {
@@ -546,63 +694,88 @@ def summarize(label: str, res: dict, ds: dict) -> dict:
 
 def fmt_row(s: dict) -> str:
     return (
-        f"{s['label']:22s} [{s['verdict']:5s}] N={s['n']:4d} ({s['per_mo']:4.0f}/m) "
+        f"{s['label']:24s} [{s['verdict']:5s}] N={s['n']:4d} ({s['per_mo']:4.0f}/m) "
         f"WR={s['wr']:4.1f}% PF={s['pf']:.2f} Ex5={s['ex5']:.2f} "
         f"OOS={s['oos_pf']:.2f}({s['oos_n']:3d}) Ret={s['ret']:+6.1f}% "
         f"DD={s['dd']:6.1f}% Sh={s['sh']:+5.2f} W/L={s['wl']:.2f}x"
     )
 
 
+def run_all_4h(ds: dict, fee_rt: float, exclude_syms: Optional[Set[str]] = None) -> Dict[str, dict]:
+    return {
+        "H1_4H_OI_BREAKOUT": run_4h_event_engine(
+            ds, fee_rt, 3, sig_h1_oi_breakout,
+            {"stop_atr": 2.2, "be_trig": 0.030, "trail_atr": 2.5, "max_hold": 24, "q_btc": True, "oi_exhaust": True},
+            exclude_syms,
+        ),
+        "H2_4H_VOLCANO_IGNITION": run_4h_event_engine(
+            ds, fee_rt, 3, sig_h2_volcano_ignition,
+            {"stop_atr": 2.2, "be_trig": 0.030, "trail_atr": 2.4, "max_hold": 18, "q_btc": True, "oi_exhaust": False},
+            exclude_syms,
+        ),
+        "H3_4H_MID_DIP_SNAP": run_4h_event_engine(
+            ds, fee_rt, 3, sig_h3_mid_dip_snap,
+            {"stop_atr": 2.0, "be_trig": 0.025, "trail_atr": 2.2, "max_hold": 15, "q_btc": False, "use_swing_low2": True},
+            exclude_syms,
+        ),
+        "H4_4H_CS_LEADER_ROT": run_4h_rotation_h4(ds, fee_rt, exclude_syms),
+    }
+
+
 def run_self_test() -> bool:
-    T = 240
+    T = 160
     t0 = int(dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc).timestamp() * 1000)
-    raw_k, raw_oi, dv = {}, {}, {}
-    for s_idx, sym in enumerate(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ZECUSDT"]):
-        km, om = {}, {}
+    raw_k, raw_oi, raw_f, dv = {}, {}, {}, {}
+    for s_idx, sym in enumerate(["BTCUSDT", "ETHUSDT", "SOLUSDT", "TIAUSDT"]):
+        km, om, fm = {}, {}, {}
         px, oi = 100.0 * (s_idx + 1), 1e8
         for i in range(T):
-            ts = t0 + i * 3600000
-            wave = math.sin((i + s_idx) * 0.11) * 0.015 + (0.004 if 90 < i < 180 else -0.001)
+            ts = t0 + i * 14400000
+            wave = math.sin((i + s_idx) * 0.16) * 0.025 + (0.006 if 60 < i < 120 else -0.002)
             o = px
             c = max(5.0, o * (1.0 + wave))
-            h, l = max(o, c) * 1.008, min(o, c) * 0.992
-            qv = 2e6 * (1.8 if i % 4 == 0 else 1.0)
-            km[ts] = {"t": ts, "o": o, "h": h, "l": l, "c": c, "qv": qv, "nt": 900.0, "tbqv": qv * 0.60}
-            oi *= 1.005 if c > o else 0.995
+            h, l = max(o, c) * 1.012, min(o, c) * 0.988
+            qv = 4e6 * (2.0 if i % 4 == 0 else 1.0)
+            km[ts] = {"t": ts, "o": o, "h": h, "l": l, "c": c, "qv": qv, "nt": 1000.0, "tbqv": qv * (0.64 if c > o else 0.36)}
+            oi *= 1.01 if c > o else 0.99
             om[ts] = oi
+            fm[ts] = -0.0001 if i % 5 == 0 else 0.00005
             if sym == "BTCUSDT":
                 dv[ts] = 45.0
             px = c
-        raw_k[sym], raw_oi[sym] = km, om
+        raw_k[sym], raw_oi[sym], raw_f[sym] = km, om, fm
 
-    ds = build_dataset(raw_k, raw_oi, dv)
+    ds = build_dataset_4h(raw_k, raw_oi, raw_f, dv)
     checks = []
-    # 1) Dataset & strictly causal hh48
     checks.append(ds["T"] == T and len(ds["syms"]) == 4)
     btc = ds["series"]["BTCUSDT"]
-    checks.append(abs(btc["hh48"][100] - max(btc["h"][52:100])) < 1e-9)
-    # 2) Full F3 + ablation + Leave-2-Out + plateau all run cleanly
-    r_full = run_f3(ds, fee_rt=0.0026)
-    s_full = summarize("FULL", r_full, ds)
-    checks.append(math.isfinite(s_full["pf"]) and math.isfinite(s_full["sh"]))
-    r_l2 = run_f3(ds, fee_rt=0.0026, exclude_syms={"ETHUSDT", "ZECUSDT"})
-    checks.append(all(x["sym"] not in {"ETH", "ZEC"} for x in r_l2["trades"]))
-    r_p = run_f3(ds, fee_rt=0.0026, hh_key="hh60", oi_6h_min=0.016, q_stall=False)
-    checks.append(len(r_p["eq"]) == T)
-    # 3) Zero-trade safety
-    r_z = run_f3(ds, fee_rt=0.0026, oi_6h_min=9.9)
-    s_z = summarize("ZERO", r_z, ds)
-    checks.append(s_z["n"] == 0 and s_z["pf"] == 0.0 and s_z["verdict"] == "NO-GO")
+    checks.append(abs(btc["hh15"][60] - max(btc["h"][45:60])) < 1e-9)
+    res_map = run_all_4h(ds, 0.0026)
+    checks.append(len(res_map) == 4)
+    checks.append(all(math.isfinite(summarize(k, v, ds)["pf"]) for k, v in res_map.items()))
+    # Gap-down + Next-Open check
+    gap_k = {"BTCUSDT": {}}
+    for i in range(80):
+        ts = t0 + i * 14400000
+        o, h, l, c = (82.0, 83.0, 81.0, 82.0) if i == 62 else (100.0, 101.0, 99.0, 100.5)
+        gap_k["BTCUSDT"][ts] = {"t": ts, "o": o, "h": h, "l": l, "c": c, "qv": 2e6, "nt": 500.0, "tbqv": 1.2e6}
+    gds = build_dataset_4h(gap_k, {}, {}, {})
+    gres = run_4h_event_engine(gds, 0.0026, 1, lambda s, d, i, _ds: 1.0 if i == 60 else None, {"stop_atr": 2.0, "be_trig": 0.03, "trail_atr": 2.0, "max_hold": 10})
+    checks.append(len(gres["trades"]) == 1 and gres["trades"][0]["entry_i"] == 61 and gres["trades"][0]["reason"] == "STOP_GAP")
+    # Zero-trade safety
+    zres = run_4h_event_engine(gds, 0.0026, 1, lambda s, d, i, _ds: None, {"stop_atr": 2.0, "be_trig": 0.03, "trail_atr": 2.0, "max_hold": 10})
+    zst = summarize("ZERO", zres, gds)
+    checks.append(zst["n"] == 0 and zst["pf"] == 0.0 and zst["verdict"] == "NO-GO")
 
     passed = sum(1 for c in checks if c)
-    print(f"F3_TORTURE_SELF_TEST: {passed}/{len(checks)} PASS")
+    print(f"S7_4H_SELF_TEST: {passed}/{len(checks)} PASS")
     return passed == len(checks)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="OMEGA S7 F3 2-Year Torture & Ablation Audit v1.0")
+    ap = argparse.ArgumentParser(description="OMEGA S7 4H Swing & Volcano-Ignition Lab v1.0")
     ap.add_argument("--days", type=int, default=730)
-    ap.add_argument("--out", type=str, default="OMEGA_S7_F3_TORTURE_REPORT.txt")
+    ap.add_argument("--out", type=str, default="OMEGA_S7_4H_SWING_REPORT.txt")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
 
@@ -613,119 +786,92 @@ def main():
         print("ERROR: requests required")
         sys.exit(1)
 
-    end_dt = utc_now().replace(minute=0, second=0, microsecond=0) - dt.timedelta(hours=1)
+    end_dt = utc_now().replace(minute=0, second=0, microsecond=0)
+    end_dt = end_dt.replace(hour=(end_dt.hour // 4) * 4) - dt.timedelta(hours=4)
     start_dt = end_dt - dt.timedelta(days=args.days)
-    print(f"[OMEGA F3 TORTURE v{VERSION}] Fetching {args.days}d 1H data ({start_dt:%Y-%m-%d} -> {end_dt:%Y-%m-%d})...")
+    print(f"[OMEGA S7 4H v{VERSION}] Fetching {args.days}d 4H data ({start_dt:%Y-%m-%d} -> {end_dt:%Y-%m-%d})...")
 
-    raw_k, raw_oi = {}, {}
-    for idx, sym in enumerate(UNIVERSE_15, 1):
-        print(f"  ({idx:02d}/{len(UNIVERSE_15)}) {sym}: spot 1H + futures OI...")
-        raw_k[sym] = fetch_spot_1h_klines(sym, start_dt, end_dt)
-        raw_oi[sym] = fetch_futures_oi_1h(sym, start_dt, end_dt)
+    raw_k, raw_oi, raw_f = {}, {}, {}
+    for idx, sym in enumerate(UNIVERSE_20, 1):
+        print(f"  ({idx:02d}/{len(UNIVERSE_20)}) {sym}: spot 4H + futures OI + funding...")
+        raw_k[sym] = fetch_spot_4h_klines(sym, start_dt, end_dt)
+        raw_oi[sym] = fetch_futures_oi_4h(sym, start_dt, end_dt)
+        raw_f[sym] = fetch_futures_funding_4h(sym, start_dt, end_dt)
 
-    print("  Fetching Deribit BTC DVOL 1H...")
-    dvol_map = fetch_deribit_dvol_1h(start_dt, end_dt)
-    ds = build_dataset(raw_k, raw_oi, dvol_map)
+    print("  Fetching Deribit BTC DVOL...")
+    dvol_map = fetch_deribit_dvol_4h(start_dt, end_dt)
+    if "BTCUSDT" not in raw_k or len(raw_k["BTCUSDT"]) < 200:
+        print("ERROR: Insufficient BTCUSDT 4H bars.")
+        sys.exit(1)
 
+    ds = build_dataset_4h(raw_k, raw_oi, raw_f, dvol_map)
     btc_c = ds["series"]["BTCUSDT"]["c"]
-    btc_ret = (btc_c[-1] / btc_c[80] - 1.0) * 100.0
+    btc_ret = (btc_c[-1] / btc_c[50] - 1.0) * 100.0
     oi_cov = sum(1 for v in ds["series"]["BTCUSDT"]["oi"] if v > 0) / max(1, ds["T"]) * 100.0
     dv_cov = len(dvol_map) / max(1, ds["T"]) * 100.0
 
     lines = [
-        "=" * 88,
-        f"OMEGA S7 — F3_OI_FRESH_TREND_QDECAY 2-YEAR TORTURE AUDIT v{VERSION} ({utc_now():%Y-%m-%d})",
-        f"Universe: {len(ds['syms'])} coins | Bars: {ds['T']} (1H) | Span: {fmt_ts(ds['ts'][80])} .. {fmt_ts(ds['ts'][-1])}",
+        "=" * 90,
+        f"OMEGA S7 4H SWING & VOLCANO-IGNITION LAB v{VERSION} ({utc_now():%Y-%m-%d})",
+        f"Universe: {len(ds['syms'])} coins | Bars: {ds['T']} (4H) | Span: {fmt_ts(ds['ts'][50])} .. {fmt_ts(ds['ts'][-1])}",
         f"BTC Buy&Hold: {btc_ret:+.1f}% | Coverage: OI={oi_cov:.0f}% DVOL={dv_cov:.0f}%",
-        "=" * 88,
+        "Execution: Strict Next-Open, Stop-First (Gap-Protected), 70% ATR Floor, 70/30 IS/OOS",
+        "=" * 90,
         "",
-        "--- BATTERY 1: 3-FEE-TIER STRESS TEST ---",
+        "--- TABLE 1: 4H ENGINES AT 0.26% RT (NOBITEX USDT) ---",
     ]
 
-    base_res_026 = None
-    for fee in [0.0026, 0.0050, 0.0075]:
-        r = run_f3(ds, fee_rt=fee)
-        if fee == 0.0026:
-            base_res_026 = r
-        lines.append(fmt_row(summarize(f"F3_QDECAY_{fee*100:.2f}%", r, ds)))
+    res_026 = run_all_4h(ds, 0.0026)
+    stats_026 = [summarize(k, v, ds) for k, v in res_026.items()]
+    stats_026.sort(key=lambda x: x["pf"], reverse=True)
+    for s in stats_026:
+        lines.append(fmt_row(s))
 
-    # Half-Year Regime Breakdown on 0.26%
-    lines.extend(["", "--- HALF-YEAR REGIME BREAKDOWN (0.26% RT) ---"])
+    lines.extend(["", "--- TABLE 2: 4H ENGINES AT 0.50% RT (NOBITEX IRT) ---"])
+    res_050 = run_all_4h(ds, 0.0050)
+    stats_050 = [summarize(k, v, ds) for k, v in res_050.items()]
+    stats_050.sort(key=lambda x: x["pf"], reverse=True)
+    for s in stats_050:
+        lines.append(fmt_row(s))
+
+    # Deep Dive on #1 Top Engine (Half-Year + Per-Coin + Leave-2-Out)
+    best_name = stats_026[0]["label"]
+    best_res = res_026[best_name]
+    lines.extend(["", f"--- DEEP DIVE ON #1 ENGINE: {best_name} (0.26% RT) ---"])
     by_half: Dict[str, List[float]] = {}
-    for x in base_res_026["trades"]:
+    for x in best_res["trades"]:
         d = dt.datetime.fromtimestamp(x["entry_ts"] / 1000.0, tz=dt.timezone.utc)
         key = f"{d.year}-H{1 if d.month <= 6 else 2}"
         by_half.setdefault(key, []).append(x["net"])
     for key in sorted(by_half.keys()):
         arr = by_half[key]
-        gp = sum(v for v in arr if v > 0)
-        gl = sum(abs(v) for v in arr if v <= 0)
+        gp, gl = sum(v for v in arr if v > 0), sum(abs(v) for v in arr if v <= 0)
         pf = gp / gl if gl > 0 else 99.0
         wr = sum(1 for v in arr if v > 0) / len(arr) * 100.0
         lines.append(f"  {key}: N={len(arr):3d} WR={wr:4.1f}% PF={pf:.2f} SumNet={sum(arr)*100:+6.1f}%")
 
-    # Battery 2: Exit Ablation + Per-Exit-Reason Breakdown
-    lines.extend(["", "--- BATTERY 2: EXIT ABLATION MATRIX (0.26% RT) ---"])
-    ablations = [
-        ("FULL_QDECAY",   dict(q_stall=True,  q_flow=True,  q_btc=True,  q_oi_exhaust=True)),
-        ("NO_Q_STALL",    dict(q_stall=False, q_flow=True,  q_btc=True,  q_oi_exhaust=True)),
-        ("NO_Q_FLOW",     dict(q_stall=True,  q_flow=False, q_btc=True,  q_oi_exhaust=True)),
-        ("NO_Q_BTC",      dict(q_stall=True,  q_flow=True,  q_btc=False, q_oi_exhaust=True)),
-        ("NO_OI_EXHAUST", dict(q_stall=True,  q_flow=True,  q_btc=True,  q_oi_exhaust=False)),
-        ("ONLY_Q_STALL",  dict(q_stall=True,  q_flow=False, q_btc=False, q_oi_exhaust=False)),
-        ("ONLY_Q_BTC",    dict(q_stall=False, q_flow=False, q_btc=True,  q_oi_exhaust=False)),
-        ("BASE_NO_QDECAY",dict(q_stall=False, q_flow=False, q_btc=False, q_oi_exhaust=False)),
-    ]
-    for lbl, kw in ablations:
-        lines.append(fmt_row(summarize(lbl, run_f3(ds, fee_rt=0.0026, **kw), ds)))
-
-    lines.extend(["", "--- PER-EXIT-REASON ATTRIBUTION (FULL_QDECAY 0.26%) ---"])
-    by_reason: Dict[str, List[float]] = {}
-    for x in base_res_026["trades"]:
-        by_reason.setdefault(x["reason"], []).append(x["net"])
-    for rsn, arr in sorted(by_reason.items(), key=lambda kv: sum(kv[1]), reverse=True):
-        wr = sum(1 for v in arr if v > 0) / len(arr) * 100.0
-        lines.append(f"  {rsn:12s}: N={len(arr):4d} WR={wr:4.1f}% Avg={sum(arr)/len(arr)*100:+5.2f}% SumNet={sum(arr)*100:+6.1f}%")
-
-    # Battery 3: Per-Coin Attribution + Leave-2-Out
-    lines.extend(["", "--- BATTERY 3: PER-COIN ATTRIBUTION & LEAVE-2-OUT (0.26% RT) ---"])
     by_coin: Dict[str, List[float]] = {}
-    for x in base_res_026["trades"]:
+    for x in best_res["trades"]:
         by_coin.setdefault(x["sym"], []).append(x["net"])
     coin_ranked = sorted(by_coin.items(), key=lambda kv: sum(kv[1]), reverse=True)
+    lines.append("")
     for sym, arr in coin_ranked:
-        gp = sum(v for v in arr if v > 0)
-        gl = sum(abs(v) for v in arr if v <= 0)
+        gp, gl = sum(v for v in arr if v > 0), sum(abs(v) for v in arr if v <= 0)
         pf = gp / gl if gl > 0 else 99.0
         wr = sum(1 for v in arr if v > 0) / len(arr) * 100.0
         lines.append(f"  {sym:6s}: N={len(arr):3d} WR={wr:4.1f}% PF={pf:.2f} SumNet={sum(arr)*100:+6.1f}%")
 
     top2 = {f"{coin_ranked[i][0]}USDT" for i in range(min(2, len(coin_ranked)))}
-    l2_res = run_f3(ds, fee_rt=0.0026, exclude_syms=top2)
+    l2_map = run_all_4h(ds, 0.0026, exclude_syms=top2)
     lines.append("")
     lines.append(f"  Dropped Top-2 Coins: {sorted(top2)}")
-    lines.append("  " + fmt_row(summarize("LEAVE_2_OUT_0.26%", l2_res, ds)))
-
-    # Battery 4: 3x3 Parameter Plateau
-    lines.extend(["", "--- BATTERY 4: 3x3 PARAMETER PLATEAU (HH_LEN x OI_6H_MIN, 0.26% RT) ---"])
-    pass_cnt = 0
-    for hh_k in ["hh36", "hh48", "hh60"]:
-        for oi_m in [0.008, 0.012, 0.016]:
-            st = summarize(f"{hh_k}_OI{oi_m*100:.1f}%", run_f3(ds, fee_rt=0.0026, hh_key=hh_k, oi_6h_min=oi_m), ds)
-            if st["pf"] >= 1.15 and st["ret"] > 0:
-                pass_cnt += 1
-            lines.append("  " + fmt_row(st))
-    lines.append(f"  PLATEAU SCORE: {pass_cnt}/9 cells with PF>=1.15 & Ret>0")
-
-    # Battery 5: Live Endpoint Feasibility Probe
-    lines.extend(["", "--- BATTERY 5: LIVE BOT ENDPOINT FEASIBILITY PROBE ---"])
-    lines.extend(probe_live_endpoints())
+    lines.append("  " + fmt_row(summarize(f"{best_name}_L2O", l2_map[best_name], ds)))
 
     report = "\n".join(lines)
     print("\n" + report)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(report + "\n")
-    print(f"\nSaved torture audit report to {args.out}")
+    print(f"\nSaved 4H report to {args.out}")
 
 
 if __name__ == "__main__":
