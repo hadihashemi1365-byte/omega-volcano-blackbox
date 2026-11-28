@@ -1,6 +1,6 @@
 {
   "version": "v2.0",
-  "last_updated_utc": "2026-11-28T15:01:14Z",
+  "last_updated_utc": "2026-11-28T15:15:45Z",
   "total_days": 6,
   "dates": [
     "2026-11-23",
@@ -18,8 +18,8 @@
   "macro_onchain": {
     "fear_greed": 10,
     "eth_gas_gwei": 0.05,
-    "btc_mempool_vmb": 33.18,
-    "btc_dom_pct": 57.69,
-    "mcap_chg24h": -5.74
+    "btc_mempool_vmb": 33.98,
+    "btc_dom_pct": 57.71,
+    "mcap_chg24h": -2.74
   }
 }
